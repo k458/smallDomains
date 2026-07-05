@@ -1,3 +1,5 @@
+namespace Attack;
+
 public class WeaponDamageCalculator
 {
     public void CalculateDamage(

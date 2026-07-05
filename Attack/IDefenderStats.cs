@@ -1,3 +1,5 @@
+namespace Attack;
+
 public interface IDefenderStats
 {
     int Dodge { get; }

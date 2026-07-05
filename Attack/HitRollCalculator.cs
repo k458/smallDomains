@@ -1,5 +1,7 @@
 using System;
 
+namespace Attack;
+
 public static class HitRollCalculator
 {
     public static HitRollResult RollHit(

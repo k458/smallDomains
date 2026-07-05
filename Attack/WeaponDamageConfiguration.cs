@@ -1,3 +1,5 @@
+namespace Attack;
+
 public struct WeaponDamageConfiguration
 {
     public int damage;
