@@ -7,5 +7,6 @@ public interface IGameHandler
     IGameSceneReadOnly GetCurrentSceneReadOnly();
 
     bool TryHandle(IGameCommand command);
-}
 
+    void Process(float deltaTime);
+}
