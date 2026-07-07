@@ -4,7 +4,8 @@ namespace SpaceGameRoguelike.GameHandling;
 
 public interface IGameHandler
 {
-    IROGameScene GetCurrentSceneReadOnly();
+    IGameSceneReadOnly GetCurrentSceneReadOnly();
 
     bool TryHandle(IGameCommand command);
 }
+
