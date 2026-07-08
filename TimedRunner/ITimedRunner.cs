@@ -5,7 +5,7 @@ namespace TimedRunner;
 public interface ITimedRunner : ITRunnable
 {
     IReadOnlyList<ITRunnable> Runnables { get; }
-    float TickRate { get; set; }
+    float TickInterval { get; set; }
     float TickProgress { get; }
 
     bool Subscribe(ITRunnable runnable);

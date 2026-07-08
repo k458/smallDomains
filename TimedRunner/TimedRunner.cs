@@ -6,29 +6,29 @@ namespace TimedRunner;
 public class TimedRunner : ITimedRunner
 {
     private readonly List<ITRunnable> runnables = new();
-    private float tickRate = 1f;
+    private float tickInterval = 1f;
     private float timeSinceLastTick;
 
     public IReadOnlyList<ITRunnable> Runnables => runnables;
 
-    public float TickRate
+    public float TickInterval
     {
-        get => tickRate;
+        get => tickInterval;
         set
         {
             if (value <= 0f)
             {
                 throw new ArgumentOutOfRangeException(
                     nameof(value),
-                    "Tick rate must be greater than zero.");
+                    "Tick interval must be greater than zero.");
             }
 
-            tickRate = value;
-            timeSinceLastTick = MathF.Min(timeSinceLastTick, tickRate);
+            tickInterval = value;
+            timeSinceLastTick = MathF.Min(timeSinceLastTick, tickInterval);
         }
     }
 
-    public float TickProgress => Math.Clamp(timeSinceLastTick / tickRate, 0f, 1f);
+    public float TickProgress => Math.Clamp(timeSinceLastTick / tickInterval, 0f, 1f);
 
     public bool Subscribe(ITRunnable runnable)
     {
@@ -50,10 +50,10 @@ public class TimedRunner : ITimedRunner
     {
         timeSinceLastTick += deltaTime;
 
-        while (timeSinceLastTick >= tickRate)
+        while (timeSinceLastTick >= tickInterval)
         {
-            RunSubscribed(tickRate);
-            timeSinceLastTick -= tickRate;
+            RunSubscribed(tickInterval);
+            timeSinceLastTick -= tickInterval;
         }
     }
 
