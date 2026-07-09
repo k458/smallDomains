@@ -2,4 +2,5 @@
 
 public interface IMainMenuCommand : IGameCommand
 {
+    int ButtonIndex { get; }
 }
