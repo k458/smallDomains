@@ -3,7 +3,10 @@ using System.Diagnostics;
 using System.Threading;
 using SpaceGameRoguelike.GameHandling;
 using SpaceGameRoguelike.GameHandling.GameCommand.MainMenuCommand;
+using SpaceGameRoguelike.GameHandling.GameCommand.PlayerBaseMenuCommand;
 using SpaceGameRoguelike.GameScene;
+using SpaceGameRoguelike.GameScene.AppMenu;
+using SpaceGameRoguelike.GameScene.PlayerBaseMenu;
 using TimedRunner;
 
 namespace SpaceGameRoguelike.View;
@@ -28,8 +31,10 @@ public class ViewTerminal
 
             if (gameHandler.NeedsRedraw)
             {
-                currentScene = gameHandler.GetCurrentSceneReadOnly();
-                Redraw(gameHandler);
+                IGameSceneReadOnly scene = gameHandler.GetCurrentSceneReadOnly();
+                currentScene = scene;
+                PrintQueue(gameHandler);
+                RedrawScene(scene);
                 gameHandler.ClearNeedsRedraw();
             }
 
@@ -39,15 +44,11 @@ public class ViewTerminal
                 string? input = Console.ReadLine();
                 Console.WriteLine(input);
 
-                if (TryParseInput(input, out int parsedInput))
-                {
-                    currentScene ??= gameHandler.GetCurrentSceneReadOnly();
-                    IGameCommand? command = BuildCommand(parsedInput);
+                currentScene ??= gameHandler.GetCurrentSceneReadOnly();
 
-                    if (command is not null)
-                    {
-                        gameHandler.TryHandle(command);
-                    }
+                if (TryBuildCommand(input, currentScene, out IGameCommand? command) && command is not null)
+                {
+                    gameHandler.TryHandle(command);
                 }
             }
             else
@@ -80,39 +81,144 @@ public class ViewTerminal
         return true;
     }
 
-    private IGameCommand? BuildCommand(int buttonIndex)
+    private static bool TryBuildCommand(
+        string? input,
+        IGameSceneReadOnly scene,
+        out IGameCommand? command)
     {
-        return currentScene switch
+        command = null;
+
+        if (!TryParseInput(input, out int buttonIndex))
         {
-            IMainMenuSceneReadOnly => new MainMenuCommand(buttonIndex),
-            _ => null,
+            return false;
+        }
+
+        return scene switch
+        {
+            IAppMenu appMenu => TryBuildAppMenuCommand(buttonIndex, appMenu, out command),
+            IPlayerBaseMenu playerBaseMenu => TryBuildPlayerBaseMenuCommand(buttonIndex, playerBaseMenu, out command),
+            _ => false,
         };
     }
 
-    private void Redraw(IGameHandler gameHandler)
+    private static bool TryBuildAppMenuCommand(
+        int buttonIndex,
+        IAppMenu appMenu,
+        out IGameCommand? command)
+    {
+        command = appMenu switch
+        {
+            IAppMenuMain => new MainMenuCommand(buttonIndex),
+            _ => null,
+        };
+
+        return command is not null;
+    }
+
+    private static bool TryBuildPlayerBaseMenuCommand(
+        int buttonIndex,
+        IPlayerBaseMenu playerBaseMenu,
+        out IGameCommand? command)
+    {
+        command = playerBaseMenu switch
+        {
+            IPlayerBaseMenuMain => new PlayerBaseMenuCommand(buttonIndex),
+            IPlayerBaseMenuResearch => new PlayerBaseMenuCommand(buttonIndex),
+            IPlayerBaseMenuEmbark => new PlayerBaseMenuCommand(buttonIndex),
+            _ => null,
+        };
+
+        return command is not null;
+    }
+
+    private static void PrintQueue(IGameHandler gameHandler)
     {
         while (gameHandler.OutputQueue.TryDequeue(out string? output))
         {
             Console.WriteLine(output);
         }
+    }
 
-        switch (currentScene)
+    private void RedrawScene(IGameSceneReadOnly scene)
+    {
+        switch (scene)
         {
-            case IMainMenuSceneReadOnly mainMenuScene:
-                RedrawMainMenu(mainMenuScene);
+            case IAppMenu appMenu:
+                RedrawAppMenu(appMenu);
+                break;
+            case IPlayerBaseMenu playerBaseMenu:
+                RedrawPlayerBaseMenu(playerBaseMenu);
                 break;
         }
     }
 
-    private void RedrawMainMenu(IMainMenuSceneReadOnly mainMenuScene)
+    private void RedrawAppMenu(IAppMenu appMenu)
     {
-        Console.WriteLine("main menu");
-
-        for (int i = 0; i < mainMenuScene.Buttons.Count; i++)
+        switch (appMenu)
         {
-            Console.WriteLine($"{i + 1}. {mainMenuScene.Buttons[i]}");
+            case IAppMenuMain appMenuMain:
+                RedrawAppMenuMain(appMenuMain);
+                break;
+        }
+    }
+
+    private void RedrawPlayerBaseMenu(IPlayerBaseMenu playerBaseMenu)
+    {
+        switch (playerBaseMenu)
+        {
+            case IPlayerBaseMenuMain playerBaseMenuMain:
+                RedrawPlayerBaseMenuMain(playerBaseMenuMain);
+                break;
+            case IPlayerBaseMenuResearch playerBaseMenuResearch:
+                RedrawPlayerBaseMenuResearch(playerBaseMenuResearch);
+                break;
+            case IPlayerBaseMenuEmbark playerBaseMenuEmbark:
+                RedrawPlayerBaseMenuEmbark(playerBaseMenuEmbark);
+                break;
+        }
+    }
+
+    private void RedrawAppMenuMain(IAppMenuMain appMenuMain)
+    {
+        Console.WriteLine();
+        Console.WriteLine("MAIN MENU");
+
+        for (int i = 0; i < appMenuMain.Buttons.Count; i++)
+        {
+            Console.WriteLine($"{i + 1}. {appMenuMain.Buttons[i]}");
+        }
+    }
+
+    private void RedrawPlayerBaseMenuMain(IPlayerBaseMenuMain playerBaseMenuMain)
+    {
+        Console.WriteLine();
+        Console.WriteLine("PLAYER BASE");
+
+        for (int i = 0; i < playerBaseMenuMain.Buttons.Count; i++)
+        {
+            Console.WriteLine($"{i + 1}. {playerBaseMenuMain.Buttons[i]}");
+        }
+    }
+
+    private void RedrawPlayerBaseMenuResearch(IPlayerBaseMenuResearch playerBaseMenuResearch)
+    {
+        Console.WriteLine();
+        Console.WriteLine("RESEARCH");
+
+        for (int i = 0; i < playerBaseMenuResearch.Buttons.Count; i++)
+        {
+            Console.WriteLine($"{i + 1}. {playerBaseMenuResearch.Buttons[i]}");
+        }
+    }
+
+    private void RedrawPlayerBaseMenuEmbark(IPlayerBaseMenuEmbark playerBaseMenuEmbark)
+    {
+        Console.WriteLine();
+        Console.WriteLine("EMBARK");
+
+        for (int i = 0; i < playerBaseMenuEmbark.Buttons.Count; i++)
+        {
+            Console.WriteLine($"{i + 1}. {playerBaseMenuEmbark.Buttons[i]}");
         }
     }
 }
-
-

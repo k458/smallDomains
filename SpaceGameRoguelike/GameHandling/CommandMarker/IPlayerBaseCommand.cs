@@ -2,4 +2,5 @@
 
 public interface IPlayerBaseCommand : IGameCommand
 {
+    int ButtonIndex { get; }
 }
