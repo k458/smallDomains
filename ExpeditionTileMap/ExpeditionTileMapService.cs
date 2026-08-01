@@ -7,11 +7,13 @@ public class ExpeditionTileMapService
         if (map.TilesByPosition.TryGetValue(position, out ExpeditionTile? existingTile))
         {
             existingTile.Discovered = true;
+            MarkTileChanged(map, position);
             return existingTile;
         }
 
         ExpeditionTile tile = new(position);
         map.TilesByPosition.Add(position, tile);
+        MarkStructureChanged(map, position);
         return tile;
     }
 
@@ -24,12 +26,21 @@ public class ExpeditionTileMapService
             return false;
         }
 
+        ExpeditionTileMapPosition? previousPosition = map.CurrentTile?.Position;
         map.CurrentTile = proposedTile;
+        MarkTileChanged(map, position);
+
+        if (previousPosition.HasValue && previousPosition.Value != position)
+        {
+            MarkTileChanged(map, previousPosition.Value);
+        }
 
         if (proposedTile.Connected)
         {
             map.RecordedPath.Clear();
             map.RecordedPath.Add(proposedTile);
+            MarkRecordedPathChanged(map);
+            MarkTileChanged(map, position);
             return true;
         }
 
@@ -38,10 +49,13 @@ public class ExpeditionTileMapService
         {
             int removeStartIndex = existingPathIndex + 1;
             map.RecordedPath.RemoveRange(removeStartIndex, map.RecordedPath.Count - removeStartIndex);
+            MarkRecordedPathChanged(map);
             return true;
         }
 
         map.RecordedPath.Add(proposedTile);
+        MarkRecordedPathChanged(map);
+        MarkTileChanged(map, position);
         return true;
     }
 
@@ -69,6 +83,7 @@ public class ExpeditionTileMapService
 
         tile.Connected = true;
         map.ParentByPosition[position] = parentPosition;
+        MarkParentConnectionsChanged(map);
 
         if (!map.ChildrenByPosition.TryGetValue(parentPosition, out HashSet<ExpeditionTileMapPosition>? children))
         {
@@ -77,6 +92,9 @@ public class ExpeditionTileMapService
         }
 
         children.Add(position);
+        MarkChildrenConnectionsChanged(map);
+        MarkTileChanged(map, position);
+        MarkTileChanged(map, parentPosition);
         return true;
     }
 
@@ -90,11 +108,13 @@ public class ExpeditionTileMapService
         }
 
         relayTile.Relay = false;
+        MarkTileChanged(map, relayPosition);
 
         ExpeditionTileMapPosition currentPosition = relayPosition;
         while (map.TilesByPosition.TryGetValue(currentPosition, out ExpeditionTile? currentTile))
         {
             currentTile.Connected = false;
+            MarkTileChanged(map, currentPosition);
 
             if (!map.ParentByPosition.TryGetValue(currentPosition, out ExpeditionTileMapPosition parentPosition))
             {
@@ -108,6 +128,8 @@ public class ExpeditionTileMapService
             {
                 break;
             }
+
+            MarkTileChanged(map, parentPosition);
 
             if (parentTile.Spine || parentTile.Relay || !map.ParentByPosition.ContainsKey(parentPosition) || HasChildren(map, parentPosition))
             {
@@ -133,6 +155,7 @@ public class ExpeditionTileMapService
             {
                 tile.Discovered = false;
                 tile.Rolled = false;
+                MarkTileChanged(map, position);
                 continue;
             }
 
@@ -159,9 +182,24 @@ public class ExpeditionTileMapService
             foreach (ExpeditionTileMapPosition childPosition in children)
             {
                 map.ParentByPosition.Remove(childPosition);
+                MarkParentConnectionsChanged(map);
+                MarkTileChanged(map, childPosition);
             }
+
+            MarkChildrenConnectionsChanged(map);
         }
 
+        if (map.CurrentTile?.Position == position)
+        {
+            map.CurrentTile = null;
+        }
+
+        if (map.RecordedPath.RemoveAll(tile => tile.Position == position) > 0)
+        {
+            MarkRecordedPathChanged(map);
+        }
+
+        MarkStructureChanged(map, position);
         return true;
     }
 
@@ -172,12 +210,17 @@ public class ExpeditionTileMapService
             return;
         }
 
+        MarkParentConnectionsChanged(map);
+        MarkTileChanged(map, position);
+        MarkTileChanged(map, parentPosition);
+
         if (!map.ChildrenByPosition.TryGetValue(parentPosition, out HashSet<ExpeditionTileMapPosition>? children))
         {
             return;
         }
 
         children.Remove(position);
+        MarkChildrenConnectionsChanged(map);
 
         if (children.Count == 0)
         {
@@ -188,5 +231,38 @@ public class ExpeditionTileMapService
     private bool HasChildren(ExpeditionTileMap map, ExpeditionTileMapPosition position)
     {
         return map.ChildrenByPosition.TryGetValue(position, out HashSet<ExpeditionTileMapPosition>? children) && children.Count > 0;
+    }
+
+    private void MarkStructureChanged(ExpeditionTileMap map, ExpeditionTileMapPosition position)
+    {
+        MarkTileChanged(map, position);
+        map.StructureVersion = map.Version;
+    }
+
+    private void MarkTileChanged(ExpeditionTileMap map, ExpeditionTileMapPosition position)
+    {
+        map.TileVersion = IncrementVersion(map);
+        map.DirtyPositions.Add(position);
+    }
+
+    private void MarkRecordedPathChanged(ExpeditionTileMap map)
+    {
+        map.RecordedPathVersion = IncrementVersion(map);
+    }
+
+    private void MarkParentConnectionsChanged(ExpeditionTileMap map)
+    {
+        map.ParentConnectionsVersion = IncrementVersion(map);
+    }
+
+    private void MarkChildrenConnectionsChanged(ExpeditionTileMap map)
+    {
+        map.ChildrenConnectionsVersion = IncrementVersion(map);
+    }
+
+    private long IncrementVersion(ExpeditionTileMap map)
+    {
+        map.Version++;
+        return map.Version;
     }
 }
