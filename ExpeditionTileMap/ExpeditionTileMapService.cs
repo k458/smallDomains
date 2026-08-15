@@ -1,263 +1,430 @@
-﻿namespace ExpeditionTileMap;
+﻿using Shared;
+
+namespace ExpeditionTileMap;
 
 public class ExpeditionTileMapService
 {
-    public ExpeditionTile DiscoverTile(ExpeditionTileMap map, ExpeditionTileMapPosition position)
+    public bool TryProposeWaypoint(ExpeditionTileMap map, int x, int y)
     {
-        if (map.TilesByPosition.TryGetValue(position, out ExpeditionTile? existingTile))
-        {
-            existingTile.Discovered = true;
-            MarkTileChanged(map, position);
-            return existingTile;
-        }
-
-        ExpeditionTile tile = new(position);
-        map.TilesByPosition.Add(position, tile);
-        MarkStructureChanged(map, position);
-        return tile;
+        return TryProposeWaypoint(map, new V2I(x, y));
     }
 
-    public bool TryUpdateCurrentTile(ExpeditionTileMap map, int x, int y)
+    public bool TryProposeWaypoint(ExpeditionTileMap map, V2I waypoint)
     {
-        ExpeditionTileMapPosition position = new(x, y);
-
-        if (!map.TilesByPosition.TryGetValue(position, out ExpeditionTile? proposedTile) || !proposedTile.Discovered)
+        if (!map.TilesByPosition.ContainsKey(waypoint))
         {
             return false;
         }
 
-        ExpeditionTileMapPosition? previousPosition = map.CurrentTile?.Position;
-        map.CurrentTile = proposedTile;
-        MarkTileChanged(map, position);
-
-        if (previousPosition.HasValue && previousPosition.Value != position)
+        if (map.ProposedPath.Count == 0)
         {
-            MarkTileChanged(map, previousPosition.Value);
-        }
+            if (!map.RelaysByPosition.TryGetValue(waypoint, out ExpeditionRelay? startRelay) || !startRelay.Connected)
+            {
+                return false;
+            }
 
-        if (proposedTile.Connected)
-        {
-            map.RecordedPath.Clear();
-            map.RecordedPath.Add(proposedTile);
-            MarkRecordedPathChanged(map);
-            MarkTileChanged(map, position);
+            AddRelayOrder(map, waypoint);
+            map.ProposedPath.Add(waypoint);
+            map.CompletedProposedPathIndex = -1;
+            MarkProposedPathChanged(map);
+            MarkProposedPathProgressChanged(map);
+            MarkDirty(map, waypoint);
             return true;
         }
 
-        int existingPathIndex = map.RecordedPath.IndexOf(proposedTile);
-        if (existingPathIndex >= 0)
+        V2I previous = map.ProposedPath[^1];
+        if (previous == waypoint)
         {
-            int removeStartIndex = existingPathIndex + 1;
-            map.RecordedPath.RemoveRange(removeStartIndex, map.RecordedPath.Count - removeStartIndex);
-            MarkRecordedPathChanged(map);
-            return true;
+            return false;
         }
 
-        map.RecordedPath.Add(proposedTile);
-        MarkRecordedPathChanged(map);
-        MarkTileChanged(map, position);
+        if (previous.X != waypoint.X && previous.Y != waypoint.Y)
+        {
+            return false;
+        }
+
+        if (!TryBuildStraightSegment(previous, waypoint, out List<V2I> segment))
+        {
+            return false;
+        }
+
+        for (int i = 1; i < segment.Count - 1; i++)
+        {
+            V2I position = segment[i];
+
+            if (!map.TilesByPosition.ContainsKey(position))
+            {
+                return false;
+            }
+
+            if (HasWire(map, position))
+            {
+                return false;
+            }
+        }
+
+        for (int i = 1; i < segment.Count; i++)
+        {
+            V2I position = segment[i];
+
+            if (!map.TilesByPosition.ContainsKey(position))
+            {
+                return false;
+            }
+
+            map.ProposedPath.Add(position);
+            MarkDirty(map, position);
+        }
+
+        map.ProposedRelays.Add(waypoint);
+        MarkProposedPathChanged(map);
+        MarkProposedRelaysChanged(map);
+        MarkDirty(map, previous);
         return true;
     }
 
-    public bool TryConnectTile(ExpeditionTileMap map, int x, int y, int parentX, int parentY)
+    public void ClearProposedPath(ExpeditionTileMap map)
     {
-        ExpeditionTileMapPosition position = new(x, y);
-        ExpeditionTileMapPosition parentPosition = new(parentX, parentY);
-
-        if (position == parentPosition)
+        foreach (V2I position in map.ProposedPath)
         {
-            return false;
+            MarkDirty(map, position);
         }
 
-        if (!map.TilesByPosition.TryGetValue(position, out ExpeditionTile? tile) || !tile.Discovered)
+        foreach (V2I position in map.ProposedRelays)
         {
-            return false;
+            MarkDirty(map, position);
         }
 
-        if (!map.TilesByPosition.TryGetValue(parentPosition, out ExpeditionTile? parentTile) || !parentTile.Discovered)
-        {
-            return false;
-        }
-
-        RemoveParentConnection(map, position);
-
-        tile.Connected = true;
-        map.ParentByPosition[position] = parentPosition;
-        MarkParentConnectionsChanged(map);
-
-        if (!map.ChildrenByPosition.TryGetValue(parentPosition, out HashSet<ExpeditionTileMapPosition>? children))
-        {
-            children = new HashSet<ExpeditionTileMapPosition>();
-            map.ChildrenByPosition.Add(parentPosition, children);
-        }
-
-        children.Add(position);
-        MarkChildrenConnectionsChanged(map);
-        MarkTileChanged(map, position);
-        MarkTileChanged(map, parentPosition);
-        return true;
+        map.ProposedPath.Clear();
+        map.ProposedRelays.Clear();
+        map.CompletedProposedPathIndex = -1;
+        MarkProposedPathChanged(map);
+        MarkProposedRelaysChanged(map);
+        MarkProposedPathProgressChanged(map);
     }
 
-    public bool TryRemoveRelay(ExpeditionTileMap map, int x, int y)
+    public bool AdvanceProposedPath(ExpeditionTileMap map)
     {
-        ExpeditionTileMapPosition relayPosition = new(x, y);
-
-        if (!map.TilesByPosition.TryGetValue(relayPosition, out ExpeditionTile? relayTile) || !relayTile.Relay)
+        int nextIndex = map.CompletedProposedPathIndex + 1;
+        if (nextIndex < 0 || nextIndex >= map.ProposedPath.Count)
         {
             return false;
         }
 
-        relayTile.Relay = false;
-        MarkTileChanged(map, relayPosition);
-
-        ExpeditionTileMapPosition currentPosition = relayPosition;
-        while (map.TilesByPosition.TryGetValue(currentPosition, out ExpeditionTile? currentTile))
+        if (map.CompletedProposedPathIndex >= 0)
         {
-            currentTile.Connected = false;
-            MarkTileChanged(map, currentPosition);
+            MarkDirty(map, map.ProposedPath[map.CompletedProposedPathIndex]);
+        }
 
-            if (!map.ParentByPosition.TryGetValue(currentPosition, out ExpeditionTileMapPosition parentPosition))
-            {
-                RemoveParentConnection(map, currentPosition);
-                break;
-            }
+        map.CompletedProposedPathIndex = nextIndex;
+        V2I completedPosition = map.ProposedPath[nextIndex];
+        map.CurrentPosition = completedPosition;
+        MarkDirty(map, completedPosition);
+        MarkProposedPathProgressChanged(map);
 
-            RemoveParentConnection(map, currentPosition);
-
-            if (!map.TilesByPosition.TryGetValue(parentPosition, out ExpeditionTile? parentTile))
-            {
-                break;
-            }
-
-            MarkTileChanged(map, parentPosition);
-
-            if (parentTile.Spine || parentTile.Relay || !map.ParentByPosition.ContainsKey(parentPosition) || HasChildren(map, parentPosition))
-            {
-                break;
-            }
-
-            currentPosition = parentPosition;
+        if (map.ProposedRelays.Contains(completedPosition))
+        {
+            IntegrateProposedRelaySegment(map, nextIndex);
         }
 
         return true;
     }
 
-    public void RerollMap(ExpeditionTileMap map)
+    private void IntegrateProposedRelaySegment(ExpeditionTileMap map, int relayIndex)
     {
-        foreach ((ExpeditionTileMapPosition position, ExpeditionTile tile) in map.TilesByPosition.ToArray())
-        {
-            if (tile.Connected)
-            {
-                continue;
-            }
-
-            if (tile.Suppressed)
-            {
-                tile.Discovered = false;
-                tile.Rolled = false;
-                MarkTileChanged(map, position);
-                continue;
-            }
-
-            RemoveTile(map, position);
-        }
-    }
-
-    public bool TryGetTile(ExpeditionTileMap map, ExpeditionTileMapPosition position, out ExpeditionTile? tile)
-    {
-        return map.TilesByPosition.TryGetValue(position, out tile);
-    }
-
-    public bool RemoveTile(ExpeditionTileMap map, ExpeditionTileMapPosition position)
-    {
-        if (!map.TilesByPosition.Remove(position))
-        {
-            return false;
-        }
-
-        RemoveParentConnection(map, position);
-
-        if (map.ChildrenByPosition.Remove(position, out HashSet<ExpeditionTileMapPosition>? children))
-        {
-            foreach (ExpeditionTileMapPosition childPosition in children)
-            {
-                map.ParentByPosition.Remove(childPosition);
-                MarkParentConnectionsChanged(map);
-                MarkTileChanged(map, childPosition);
-            }
-
-            MarkChildrenConnectionsChanged(map);
-        }
-
-        if (map.CurrentTile?.Position == position)
-        {
-            map.CurrentTile = null;
-        }
-
-        if (map.RecordedPath.RemoveAll(tile => tile.Position == position) > 0)
-        {
-            MarkRecordedPathChanged(map);
-        }
-
-        MarkStructureChanged(map, position);
-        return true;
-    }
-
-    private void RemoveParentConnection(ExpeditionTileMap map, ExpeditionTileMapPosition position)
-    {
-        if (!map.ParentByPosition.Remove(position, out ExpeditionTileMapPosition parentPosition))
+        if (!TryFindPreviousPersistentRelayIndex(map, relayIndex, out int startIndex))
         {
             return;
         }
 
-        MarkParentConnectionsChanged(map);
-        MarkTileChanged(map, position);
-        MarkTileChanged(map, parentPosition);
+        V2I endRelayPosition = map.ProposedPath[relayIndex];
+        GetOrCreateRelay(map, endRelayPosition);
+        AddRelayOrder(map, endRelayPosition);
+        MarkRelayChanged(map, endRelayPosition);
 
-        if (!map.ChildrenByPosition.TryGetValue(parentPosition, out HashSet<ExpeditionTileMapPosition>? children))
+        for (int i = startIndex; i < relayIndex; i++)
+        {
+            V2I from = map.ProposedPath[i];
+            V2I to = map.ProposedPath[i + 1];
+            TrySetWire(map, from, to, true);
+        }
+
+        map.ProposedRelays.Remove(endRelayPosition);
+        MarkProposedRelaysChanged(map);
+        MarkStructureChanged(map, endRelayPosition);
+    }
+
+    private bool TryFindPreviousPersistentRelayIndex(ExpeditionTileMap map, int relayIndex, out int previousRelayIndex)
+    {
+        for (int i = relayIndex - 1; i >= 0; i--)
+        {
+            if (map.RelaysByPosition.ContainsKey(map.ProposedPath[i]))
+            {
+                previousRelayIndex = i;
+                return true;
+            }
+        }
+
+        previousRelayIndex = -1;
+        return false;
+    }
+    private ExpeditionRelay GetOrCreateRelay(ExpeditionTileMap map, V2I position)
+    {
+        if (map.RelaysByPosition.TryGetValue(position, out ExpeditionRelay? relay))
+        {
+            return relay;
+        }
+
+        relay = new ExpeditionRelay(position);
+        map.RelaysByPosition.Add(position, relay);
+        return relay;
+    }
+
+    private bool TryBuildStraightSegment(V2I from, V2I to, out List<V2I> segment)
+    {
+        segment = new List<V2I>();
+
+        int dx = Math.Sign(to.X - from.X);
+        int dy = Math.Sign(to.Y - from.Y);
+
+        if (dx != 0 && dy != 0)
+        {
+            return false;
+        }
+
+        V2I current = from;
+        segment.Add(current);
+
+        while (current != to)
+        {
+            current = new V2I(current.X + dx, current.Y + dy);
+            segment.Add(current);
+        }
+
+        return true;
+    }
+
+    private bool HasWire(ExpeditionTileMap map, V2I position)
+    {
+        return map.WiresByPosition.TryGetValue(position, out ExpeditionWire? wire) && wire.HasAnyWire;
+    }
+
+    private bool TrySetWire(ExpeditionTileMap map, V2I from, V2I to, bool enabled)
+    {
+        V2I delta = to - from;
+        ExpeditionWire wire = GetOrCreateWire(map, from);
+        bool changed;
+
+        if (delta.X == 0 && delta.Y == -1)
+        {
+            changed = wire.Up != enabled;
+            wire.Up = enabled;
+        }
+        else if (delta.X == 1 && delta.Y == 0)
+        {
+            changed = wire.Right != enabled;
+            wire.Right = enabled;
+        }
+        else if (delta.X == 0 && delta.Y == 1)
+        {
+            changed = wire.Down != enabled;
+            wire.Down = enabled;
+        }
+        else if (delta.X == -1 && delta.Y == 0)
+        {
+            changed = wire.Left != enabled;
+            wire.Left = enabled;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (!wire.HasAnyWire)
+        {
+            map.WiresByPosition.Remove(from);
+        }
+
+        if (changed)
+        {
+            MarkWireChanged(map, from, to);
+        }
+
+        return true;
+    }
+
+    private ExpeditionWire GetOrCreateWire(ExpeditionTileMap map, V2I position)
+    {
+        if (map.WiresByPosition.TryGetValue(position, out ExpeditionWire? wire))
+        {
+            return wire;
+        }
+
+        wire = new ExpeditionWire();
+        map.WiresByPosition.Add(position, wire);
+        return wire;
+    }
+
+    public bool ReconnectGrid(ExpeditionTileMap map)
+    {
+        foreach ((V2I position, ExpeditionRelay relay) in map.RelaysByPosition)
+        {
+            relay.Connected = false;
+            relay.Powered = false;
+            MarkDirty(map, position);
+        }
+
+        map.PowerUsage = 0;
+        V2I rootPosition = new(0, 0);
+
+        if (!map.RelaysByPosition.TryGetValue(rootPosition, out ExpeditionRelay? rootRelay))
+        {
+            MarkRelayChanged(map, rootPosition);
+            MarkPowerChanged(map);
+            return false;
+        }
+
+        Queue<V2I> openPositions = new();
+        HashSet<V2I> visitedPositions = new();
+
+        rootRelay.Connected = true;
+        openPositions.Enqueue(rootPosition);
+        visitedPositions.Add(rootPosition);
+        MarkRelayChanged(map, rootPosition);
+
+        while (openPositions.Count > 0)
+        {
+            V2I position = openPositions.Dequeue();
+
+            if (!map.WiresByPosition.TryGetValue(position, out ExpeditionWire? wire))
+            {
+                continue;
+            }
+
+            TryReachRelay(map, position, new V2I(0, -1), wire.Up, openPositions, visitedPositions);
+            TryReachRelay(map, position, new V2I(1, 0), wire.Right, openPositions, visitedPositions);
+            TryReachRelay(map, position, new V2I(0, 1), wire.Down, openPositions, visitedPositions);
+            TryReachRelay(map, position, new V2I(-1, 0), wire.Left, openPositions, visitedPositions);
+        }
+
+        TryPowerRelay(map, rootPosition);
+
+        foreach (V2I relayPosition in map.RelayOrder)
+        {
+            if (relayPosition == rootPosition)
+            {
+                continue;
+            }
+
+            TryPowerRelay(map, relayPosition);
+        }
+
+        MarkPowerChanged(map);
+        return true;
+    }
+
+    private void TryReachRelay(
+        ExpeditionTileMap map,
+        V2I from,
+        V2I offset,
+        bool wireEnabled,
+        Queue<V2I> openPositions,
+        HashSet<V2I> visitedPositions)
+    {
+        if (!wireEnabled)
         {
             return;
         }
 
-        children.Remove(position);
-        MarkChildrenConnectionsChanged(map);
-
-        if (children.Count == 0)
+        V2I targetPosition = from + offset;
+        if (!visitedPositions.Add(targetPosition))
         {
-            map.ChildrenByPosition.Remove(parentPosition);
+            return;
+        }
+
+        if (map.RelaysByPosition.TryGetValue(targetPosition, out ExpeditionRelay? relay))
+        {
+            relay.Connected = true;
+            MarkRelayChanged(map, targetPosition);
+        }
+
+        if (relay is not null || map.WiresByPosition.ContainsKey(targetPosition))
+        {
+            openPositions.Enqueue(targetPosition);
         }
     }
 
-    private bool HasChildren(ExpeditionTileMap map, ExpeditionTileMapPosition position)
+    private void TryPowerRelay(ExpeditionTileMap map, V2I position)
     {
-        return map.ChildrenByPosition.TryGetValue(position, out HashSet<ExpeditionTileMapPosition>? children) && children.Count > 0;
+        if (map.PowerUsage >= map.PowerLimit)
+        {
+            return;
+        }
+
+        if (!map.RelaysByPosition.TryGetValue(position, out ExpeditionRelay? relay) || !relay.Connected || relay.Powered)
+        {
+            return;
+        }
+
+        relay.Powered = true;
+        map.PowerUsage++;
+        MarkRelayChanged(map, position);
     }
 
-    private void MarkStructureChanged(ExpeditionTileMap map, ExpeditionTileMapPosition position)
+    private void AddRelayOrder(ExpeditionTileMap map, V2I position)
     {
-        MarkTileChanged(map, position);
-        map.StructureVersion = map.Version;
+        if (map.RelayOrder.Contains(position))
+        {
+            return;
+        }
+
+        map.RelayOrder.Add(position);
+        map.RelayOrderVersion = IncrementVersion(map);
+        MarkDirty(map, position);
+    }
+    private void MarkStructureChanged(ExpeditionTileMap map, V2I position)
+    {
+        map.StructureVersion = IncrementVersion(map);
+        MarkDirty(map, position);
     }
 
-    private void MarkTileChanged(ExpeditionTileMap map, ExpeditionTileMapPosition position)
+    private void MarkRelayChanged(ExpeditionTileMap map, V2I position)
     {
-        map.TileVersion = IncrementVersion(map);
+        map.RelayVersion = IncrementVersion(map);
+        MarkDirty(map, position);
+    }
+
+    private void MarkProposedPathChanged(ExpeditionTileMap map)
+    {
+        map.ProposedPathVersion = IncrementVersion(map);
+    }
+
+    private void MarkProposedRelaysChanged(ExpeditionTileMap map)
+    {
+        map.ProposedRelaysVersion = IncrementVersion(map);
+    }
+
+    private void MarkProposedPathProgressChanged(ExpeditionTileMap map)
+    {
+        map.ProposedPathProgressVersion = IncrementVersion(map);
+    }
+
+    private void MarkPowerChanged(ExpeditionTileMap map)
+    {
+        map.PowerVersion = IncrementVersion(map);
+    }
+
+
+    private void MarkWireChanged(ExpeditionTileMap map, V2I from, V2I to)
+    {
+        map.WireVersion = IncrementVersion(map);
+        MarkDirty(map, from);
+        MarkDirty(map, to);
+    }
+
+    private void MarkDirty(ExpeditionTileMap map, V2I position)
+    {
         map.DirtyPositions.Add(position);
-    }
-
-    private void MarkRecordedPathChanged(ExpeditionTileMap map)
-    {
-        map.RecordedPathVersion = IncrementVersion(map);
-    }
-
-    private void MarkParentConnectionsChanged(ExpeditionTileMap map)
-    {
-        map.ParentConnectionsVersion = IncrementVersion(map);
-    }
-
-    private void MarkChildrenConnectionsChanged(ExpeditionTileMap map)
-    {
-        map.ChildrenConnectionsVersion = IncrementVersion(map);
     }
 
     private long IncrementVersion(ExpeditionTileMap map)
@@ -266,3 +433,9 @@ public class ExpeditionTileMapService
         return map.Version;
     }
 }
+
+
+
+
+
+
