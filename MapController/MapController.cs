@@ -9,7 +9,7 @@ public class MapController
 
     public IReadOnlyCollection<IMapEntity> MapEntities => mapEntities;
     public MapControllerState State => state;
-    public MapControllerPhase Phase { get; private set; } = MapControllerPhase.TurnNotStarted;
+    public MapControllerPhase Phase { get; private set; } = MapControllerPhase.WaitingForInput;
 
     public void AddMapEntity(IMapEntity mapEntity)
     {
@@ -39,16 +39,21 @@ public class MapController
         state.ProposedCommitments[mapEntity] = commitment;
     }
 
-    public void StartTurnIfNone()
+    public void StartOrContinueTurn()
     {
-        if (Phase != MapControllerPhase.TurnNotStarted)
+        if (Phase != MapControllerPhase.WaitingForInput)
         {
             return;
         }
 
-        StartTurn();
-    }
+        if (state.CurrentSpeed <= 0)
+        {
+            StartTurn();
+            return;
+        }
 
+        Phase = MapControllerPhase.CommitmentUpdate;
+    }
     public void Process(float deltaTime)
     {
         ProcessMapEntities(deltaTime);
@@ -130,8 +135,8 @@ public class MapController
     {
         switch (Phase)
         {
-            case MapControllerPhase.TurnNotStarted:
-            case MapControllerPhase.WaitForPlayerInput:
+
+            case MapControllerPhase.WaitingForInput:
 
                 return;
             case MapControllerPhase.CommitmentUpdate:
@@ -290,21 +295,12 @@ public class MapController
 
         if (state.CurrentSpeed <= 0)
         {
-            Phase = MapControllerPhase.TurnNotStarted;
+            state.CurrentSpeed = 0;
+            Phase = MapControllerPhase.WaitingForInput;
             return;
         }
 
-        Phase = MapControllerPhase.WaitForPlayerInput;
-    }
-
-    public void ContinueFromPlayerInput()
-    {
-        if (Phase != MapControllerPhase.WaitForPlayerInput)
-        {
-            return;
-        }
-
-        Phase = MapControllerPhase.CommitmentUpdate;
+        Phase = MapControllerPhase.WaitingForInput;
     }
 
     private IEnumerable<MapEntityTurnState> GetCommittedCurrentSpeedStates()

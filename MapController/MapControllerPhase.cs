@@ -3,8 +3,7 @@ namespace MapController;
 public enum MapControllerPhase
 {
     Undefined,
-    TurnNotStarted,
-    WaitForPlayerInput,
+    WaitingForInput,
     CommitmentUpdate,
     AttackPhase,
     MovementPhase
