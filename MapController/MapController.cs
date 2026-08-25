@@ -85,7 +85,7 @@ public class MapController
         state.AttackPhaseEntities.Clear();
         state.MovementPhaseEntities.Clear();
         state.MovementContests.Clear();
-        state.CurrentSpeed = 3;
+        state.CurrentSpeed = 1;
 
         foreach (IMapEntity mapEntity in mapEntities)
         {
@@ -274,7 +274,7 @@ public class MapController
             {
                 entityState.RemainingAP = 0;
             }
-            else
+            else if (commitment.ActionType != MapEntityActionType.Wait)
             {
                 entityState.RemainingAP = Math.Max(0, entityState.RemainingAP - Math.Max(0, commitment.ApCost));
             }
@@ -286,14 +286,14 @@ public class MapController
 
     private void ProgressAfterMovementPhase()
     {
-        state.CurrentSpeed--;
+        state.CurrentSpeed++;
 
-        while (state.CurrentSpeed > 0 && !HasProcessableEntitiesAtSpeed(state.CurrentSpeed))
+        while (state.CurrentSpeed <= 3 && !HasProcessableEntitiesAtSpeed(state.CurrentSpeed))
         {
-            state.CurrentSpeed--;
+            state.CurrentSpeed++;
         }
 
-        if (state.CurrentSpeed <= 0)
+        if (state.CurrentSpeed > 3)
         {
             state.CurrentSpeed = 0;
             Phase = MapControllerPhase.WaitingForInput;
@@ -307,7 +307,7 @@ public class MapController
     {
         foreach (MapEntityTurnState entityState in state.EntityStates.Values)
         {
-            if (entityState.RemainingAP == state.CurrentSpeed && entityState.Commitment.HasValue)
+            if (entityState.RemainingAP > 0 && entityState.Commitment.HasValue)
             {
                 yield return entityState;
             }
@@ -329,13 +329,21 @@ public class MapController
 
     private bool IsProcessableAtSpeed(MapEntityTurnState entityState, int speed)
     {
-        return entityState.RemainingAP == speed
+        _ = speed;
+
+        return entityState.RemainingAP > 0
             && entityState.MapEntity.IsAlive
             && !entityState.MapEntity.IsDisabled;
     }
 
     private void NormalizeCommitment(ref MapEntityActionCommitment commitment)
     {
+        if (commitment.ActionType == MapEntityActionType.Wait)
+        {
+            commitment.ApCost = 0;
+            return;
+        }
+
         if (commitment.ApCost <= 0)
         {
             commitment.ApCost = 1;

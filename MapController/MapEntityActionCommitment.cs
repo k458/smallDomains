@@ -20,8 +20,9 @@ public struct MapEntityActionCommitment
         return new MapEntityActionCommitment
         {
             ActionType = MapEntityActionType.Wait,
-            ApCost = 1,
+            ApCost = 0,
             IsMovementLegal = true
         };
     }
 }
+
