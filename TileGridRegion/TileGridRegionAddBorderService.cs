@@ -4,18 +4,6 @@ namespace TileGridRegion;
 
 public class TileGridRegionAddBorderService
 {
-    private static readonly V2I[] ClockwiseDirections =
-    [
-        new V2I(0, -1),
-        new V2I(1, -1),
-        new V2I(1, 0),
-        new V2I(1, 1),
-        new V2I(0, 1),
-        new V2I(-1, 1),
-        new V2I(-1, 0),
-        new V2I(-1, -1)
-    ];
-
     private static readonly V2I[] CardinalDirections =
     [
         new V2I(0, -1),
@@ -33,26 +21,27 @@ public class TileGridRegionAddBorderService
             return false;
         }
 
-        List<V2I> potentialRegionTiles = GetPotentialRegionTiles(state, position);
-        if (potentialRegionTiles.Count < 2)
+        RemoveTileFromRegion(state, position);
+
+        List<V2I> regionSeeds = GetEmptyAdjacentTiles(state, position);
+        if (regionSeeds.Count == 0)
         {
             return true;
         }
 
-        HashSet<HashSet<V2I>> removedRegions = RemoveRegionsForTiles(state, potentialRegionTiles);
-        HashSet<V2I>? rebuildScope = GetRebuildScope(removedRegions);
+        HashSet<V2I>? rebuildScope = RemoveRegionsForTiles(state, regionSeeds);
         HashSet<V2I> rebuiltTiles = [];
 
-        foreach (V2I potentialRegionTile in potentialRegionTiles)
+        foreach (V2I regionSeed in regionSeeds)
         {
-            if (rebuiltTiles.Contains(potentialRegionTile)
-                || state.BorderTiles.Contains(potentialRegionTile)
-                || !CanUseTile(potentialRegionTile, rebuildScope))
+            if (rebuiltTiles.Contains(regionSeed)
+                || state.BorderTiles.Contains(regionSeed)
+                || !CanUseTile(regionSeed, rebuildScope))
             {
                 continue;
             }
 
-            HashSet<V2I> region = BuildRegion(state, potentialRegionTile, rebuildScope);
+            HashSet<V2I> region = BuildRegion(state, regionSeed, rebuildScope, rebuiltTiles);
             if (region.Count == 0)
             {
                 continue;
@@ -69,46 +58,57 @@ public class TileGridRegionAddBorderService
         return true;
     }
 
-    private List<V2I> GetPotentialRegionTiles(TileGridRegionState state, V2I position)
+    private void RemoveTileFromRegion(TileGridRegionState state, V2I position)
     {
-        List<V2I> potentialRegionTiles = [];
-        HashSet<V2I> uniqueTiles = [];
-
-        for (int i = 0; i < ClockwiseDirections.Length; i++)
+        if (!state.RegionByTile.TryGetValue(position, out HashSet<V2I>? region))
         {
-            V2I borderCandidate = position + ClockwiseDirections[i];
-            if (!state.BorderTiles.Contains(borderCandidate))
-            {
-                continue;
-            }
-
-            V2I potentialRegionTile = position + ClockwiseDirections[(i + 1) % ClockwiseDirections.Length];
-            if (state.BorderTiles.Contains(potentialRegionTile)
-                || !uniqueTiles.Add(potentialRegionTile))
-            {
-                continue;
-            }
-
-            potentialRegionTiles.Add(potentialRegionTile);
+            return;
         }
 
-        return potentialRegionTiles;
+        region.Remove(position);
+        state.RegionByTile.Remove(position);
+
+        if (region.Count == 0)
+        {
+            state.Regions.Remove(region);
+        }
     }
 
-    private HashSet<HashSet<V2I>> RemoveRegionsForTiles(TileGridRegionState state, IEnumerable<V2I> tiles)
+    private List<V2I> GetEmptyAdjacentTiles(TileGridRegionState state, V2I position)
     {
-        HashSet<HashSet<V2I>> regions = [];
+        List<V2I> adjacentTiles = [];
+
+        foreach (V2I direction in CardinalDirections)
+        {
+            V2I adjacentTile = position + direction;
+            if (state.BorderTiles.Contains(adjacentTile)
+                || TileValidator?.Validate(adjacentTile.X, adjacentTile.Y) == false)
+            {
+                continue;
+            }
+
+            adjacentTiles.Add(adjacentTile);
+        }
+
+        return adjacentTiles;
+    }
+
+    private HashSet<V2I>? RemoveRegionsForTiles(TileGridRegionState state, IEnumerable<V2I> tiles)
+    {
+        HashSet<HashSet<V2I>> regionsToRemove = [];
 
         foreach (V2I tile in tiles)
         {
             if (state.RegionByTile.TryGetValue(tile, out HashSet<V2I>? region))
             {
-                regions.Add(region);
+                regionsToRemove.Add(region);
             }
         }
 
-        foreach (HashSet<V2I> region in regions)
+        HashSet<V2I> rebuildScope = [];
+        foreach (HashSet<V2I> region in regionsToRemove)
         {
+            rebuildScope.UnionWith(region);
             state.Regions.Remove(region);
             foreach (V2I tile in region)
             {
@@ -116,22 +116,14 @@ public class TileGridRegionAddBorderService
             }
         }
 
-        return regions;
+        return rebuildScope.Count > 0 ? rebuildScope : null;
     }
 
-    private HashSet<V2I>? GetRebuildScope(IEnumerable<HashSet<V2I>> regions)
-    {
-        HashSet<V2I> scope = [];
-
-        foreach (HashSet<V2I> region in regions)
-        {
-            scope.UnionWith(region);
-        }
-
-        return scope.Count > 0 ? scope : null;
-    }
-
-    private HashSet<V2I> BuildRegion(TileGridRegionState state, V2I start, HashSet<V2I>? rebuildScope)
+    private HashSet<V2I> BuildRegion(
+        TileGridRegionState state,
+        V2I start,
+        HashSet<V2I>? rebuildScope,
+        HashSet<V2I> rebuiltTiles)
     {
         HashSet<V2I> region = [];
         Queue<V2I> openTiles = [];
@@ -142,6 +134,7 @@ public class TileGridRegionAddBorderService
         {
             V2I tile = openTiles.Dequeue();
             if (region.Contains(tile)
+                || rebuiltTiles.Contains(tile)
                 || state.BorderTiles.Contains(tile)
                 || !CanUseTile(tile, rebuildScope))
             {
