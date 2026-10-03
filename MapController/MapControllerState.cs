@@ -8,5 +8,5 @@ public class MapControllerState
     public List<IMapEntity> MovementPhaseEntities { get; } = new();
     public List<MapMovementContest> MovementContests { get; } = new();
 
-    public int CurrentSpeed { get; set; }
+    public int CurrentActionStep { get; set; }
 }

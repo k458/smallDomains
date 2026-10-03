@@ -1,4 +1,4 @@
-﻿namespace Shared;
+namespace Essentials;
 
 public readonly record struct V2I(int X, int Y) : IComparable<V2I>
 {

@@ -1,4 +1,4 @@
-using Shared;
+using Essentials;
 
 namespace MapController;
 
@@ -46,7 +46,7 @@ public class MapController
             return;
         }
 
-        if (state.CurrentSpeed <= 0)
+        if (state.CurrentActionStep <= 0)
         {
             StartTurn();
             return;
@@ -85,7 +85,7 @@ public class MapController
         state.AttackPhaseEntities.Clear();
         state.MovementPhaseEntities.Clear();
         state.MovementContests.Clear();
-        state.CurrentSpeed = 1;
+        state.CurrentActionStep = 1;
 
         foreach (IMapEntity mapEntity in mapEntities)
         {
@@ -140,7 +140,7 @@ public class MapController
 
                 return;
             case MapControllerPhase.CommitmentUpdate:
-                UpdateCommitments(state.CurrentSpeed);
+                UpdateCommitmentsForCurrentStep();
                 Phase = MapControllerPhase.AttackPhase;
                 break;
             case MapControllerPhase.AttackPhase:
@@ -149,16 +149,16 @@ public class MapController
                 break;
             case MapControllerPhase.MovementPhase:
                 ResolveMovementPhase();
-                ProgressAfterMovementPhase();
+                ProgressAfterActionStep();
                 break;
         }
     }
 
-    private void UpdateCommitments(int speed)
+    private void UpdateCommitmentsForCurrentStep()
     {
         foreach (MapEntityTurnState entityState in state.EntityStates.Values)
         {
-            if (!IsProcessableAtSpeed(entityState, speed))
+            if (!CanActInCurrentStep(entityState))
             {
                 continue;
             }
@@ -200,7 +200,7 @@ public class MapController
     {
         state.AttackPhaseEntities.Clear();
 
-        foreach (MapEntityTurnState entityState in GetCommittedCurrentSpeedStates())
+        foreach (MapEntityTurnState entityState in GetCommittedActionStates())
         {
             MapEntityActionCommitment commitment = entityState.Commitment!.Value;
             if (!commitment.IsAttackPriority)
@@ -227,7 +227,7 @@ public class MapController
 
         List<MapEntityTurnState> movementStates = [];
 
-        foreach (MapEntityTurnState entityState in GetCommittedCurrentSpeedStates())
+        foreach (MapEntityTurnState entityState in GetCommittedActionStates())
         {
             MapEntityActionCommitment commitment = entityState.Commitment!.Value;
 
@@ -261,12 +261,12 @@ public class MapController
         }
 
         ResolveMovement(state.MovementPhaseEntities, state.MovementContests);
-        SpendCurrentSpeedActionPoints();
+        SpendCommittedActionPoints();
     }
 
-    private void SpendCurrentSpeedActionPoints()
+    private void SpendCommittedActionPoints()
     {
-        foreach (MapEntityTurnState entityState in GetCommittedCurrentSpeedStates())
+        foreach (MapEntityTurnState entityState in GetCommittedActionStates())
         {
             MapEntityActionCommitment commitment = entityState.Commitment!.Value;
 
@@ -284,18 +284,18 @@ public class MapController
         }
     }
 
-    private void ProgressAfterMovementPhase()
+    private void ProgressAfterActionStep()
     {
-        state.CurrentSpeed++;
+        state.CurrentActionStep++;
 
-        while (state.CurrentSpeed <= 3 && !HasProcessableEntitiesAtSpeed(state.CurrentSpeed))
+        while (state.CurrentActionStep <= 3 && !HasActorsWithActionPoints())
         {
-            state.CurrentSpeed++;
+            state.CurrentActionStep++;
         }
 
-        if (state.CurrentSpeed > 3)
+        if (state.CurrentActionStep > 3)
         {
-            state.CurrentSpeed = 0;
+            state.CurrentActionStep = 0;
             Phase = MapControllerPhase.WaitingForInput;
             return;
         }
@@ -303,7 +303,7 @@ public class MapController
         Phase = MapControllerPhase.WaitingForInput;
     }
 
-    private IEnumerable<MapEntityTurnState> GetCommittedCurrentSpeedStates()
+    private IEnumerable<MapEntityTurnState> GetCommittedActionStates()
     {
         foreach (MapEntityTurnState entityState in state.EntityStates.Values)
         {
@@ -314,11 +314,11 @@ public class MapController
         }
     }
 
-    private bool HasProcessableEntitiesAtSpeed(int speed)
+    private bool HasActorsWithActionPoints()
     {
         foreach (MapEntityTurnState entityState in state.EntityStates.Values)
         {
-            if (IsProcessableAtSpeed(entityState, speed))
+            if (CanActInCurrentStep(entityState))
             {
                 return true;
             }
@@ -327,10 +327,8 @@ public class MapController
         return false;
     }
 
-    private bool IsProcessableAtSpeed(MapEntityTurnState entityState, int speed)
+    private bool CanActInCurrentStep(MapEntityTurnState entityState)
     {
-        _ = speed;
-
         return entityState.RemainingAP > 0
             && entityState.MapEntity.IsAlive
             && !entityState.MapEntity.IsDisabled;
